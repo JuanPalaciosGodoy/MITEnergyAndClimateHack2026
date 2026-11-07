@@ -1,0 +1,26 @@
+field,unit,input_to_request,reference
+address,,Confirm service address against bill and property record,Brief Option 1
+city,,Confirm municipality from property record,Brief Option 1
+state,,Confirm state from property record,Brief Option 1
+latitude,degrees,Geocode and confirm the parcel on a map,Site plans
+longitude,degrees,Geocode and confirm the parcel on a map,Site plans
+building_type,,Confirm current use with owner,Brief Option 1
+floor_area_sqft,ft2,Confirm gross floor area and reporting boundary,Brief Option 1
+annual_electricity_kwh,kWh,Request 12 months of bills and check disclosure quality flags,Brief site intake
+data_year,year,Confirm the energy reporting period,Brief site intake
+utility,,Request a recent utility bill,Brief site intake
+tariff_name,,Confirm rate code and effective dates against a utility bill,Brief sizing and economics
+interval_data,,Request customer-authorized interval XML and meter identity,Brief Green Button resource
+service_voltage_v,V,Request service nameplate photo and current single-line diagram,Full Engineered Plan Set PDF p2 and p18
+service_amperage_a,A,Request main service rating from nameplate and single-line diagram,BESS IFC Sample1 PDF p9
+service_phases,,Request service configuration from nameplate and single-line diagram,BESS IFC Sample1 PDF p9
+point_of_interconnection,,Request marked single-line diagram and switchgear photo,Full Engineered Plan Set PDF p2 and p18
+transformer_rating_kva,kVA,Request transformer nameplate and ownership confirmation,BESS IFC Sample1 PDF p9
+single_line_diagram,,Request current electrical single-line drawing,Full Engineered Plan Set PDF p18
+equipment_nameplates,,Request readable meter and switchgear and transformer nameplates,BESS IFC Sample2 PDF p4
+site_photos,,Request dated exterior and electrical-room photos,Two supplied installation JPEGs
+property_boundaries,,Request parcel record or survey with scale,BESS IFC Sample2 PDF p3
+proposed_bess_location,,Request marked site plan with dimensions,Full Engineered Plan Set PDF p1 and p3
+measured_clearances_ft,ft,Request measured offsets to boundaries and openings and equipment,BESS IFC Sample2 PDF p4
+fire_access,,Request site access and egress plan for review,BESS IFC Sample2 PDF p4
+ahj,,Confirm building and fire authorities for the actual site,Full Engineered Plan Set PDF p1
