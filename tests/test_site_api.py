@@ -8,8 +8,27 @@ from fastapi.testclient import TestClient
 from API._http import APIError
 from API.ma_sources import fetch_source, query_point
 from API.server import app
-from API.site_lookup import lookup_site
-from API.checklist_table import TABLE_COLUMNS, checklist_table, lookup_table
+from API.site_lookup import lookup_site as _lookup_site
+from API.checklist_table import TABLE_COLUMNS, checklist_table as _checklist_table, lookup_table as _lookup_table
+from API.ma_sources import SOURCES
+
+
+# Full-checklist checks exercise the optional MVP providers.
+ALL_CONTEXT_SOURCES = ["utilities", "parcels", "buildings", "lber", "flood", "elevation"]
+
+
+def lookup_site(*args, **kwargs):
+    kwargs.setdefault("sources", ALL_CONTEXT_SOURCES)
+    return _lookup_site(*args, download_evidence=False, **kwargs)
+
+
+def lookup_table(*args, **kwargs):
+    kwargs.setdefault("sources", ALL_CONTEXT_SOURCES)
+    return _lookup_table(*args, download_evidence=False, include_all=True, **kwargs)
+
+
+def checklist_table(site):
+    return _checklist_table(site, include_all=True)
 
 
 def provider_result(name, latitude, longitude, **kwargs):
@@ -22,8 +41,6 @@ def provider_result(name, latitude, longitude, **kwargs):
                   "Total_Electricity_Use_Purchased_From_Grid_kBtu": 3412.141633,
                   "building_id": "nearby-1", "address": "2 EXAMPLE ST", "data_year": 2025,
                   "floor_area_sqft": 12000, "annual_electricity_kwh": 1000}],
-        "tariffs": [{"label": "candidate", "name": "Example rate", "utility": "Example Utility"}],
-        "solar": [{"City": "Holliston", "Facility Type": "Industrial"}],
         "flood": [{"FLD_ZONE": "X", "SFHA_TF": "F"}],
         "elevation": [{"elevation_m": 0}],
     }[name]
@@ -41,31 +58,31 @@ class LookupTests(unittest.TestCase):
         values = fields(result)
         self.assertEqual(result["status"], "ok")
         self.assertEqual(len(result["checklist"]), 12)
-        self.assertEqual(len(result["sources"]), 8)
+        self.assertEqual(len(result["sources"]), 6)
         self.assertEqual(values["address"]["value"], "1 EXAMPLE ST")
         self.assertEqual(values["ground_elevation_m"]["value"], 0)
         self.assertEqual(values["roofprint_area_sqft"]["value"], 4000)
         self.assertEqual(values["assessor_building_area_sqft"]["value"], 12000)
         self.assertEqual(values["annual_energy_candidates"]["status"], "candidate")
-        self.assertIsNone(values["interval_data"]["value"])
+        self.assertNotIn("interval_data", values)
         self.assertIsNone(values["existing_site_solar"]["value"])
-        self.assertIsNone(values["actual_tariff_code"]["value"])
+        self.assertNotIn("actual_tariff_code", values)
         self.assertEqual(result["references"]["permits"]["status"], "manual_lookup")
         self.assertEqual(result["references"]["permits"]["search_address"], "1 EXAMPLE ST")
         self.assertEqual(values["address"]["source_record_id"], 10)
 
     def test_provider_failure_keeps_other_results(self):
         def failing(name, lat, lon, **kwargs):
-            if name == "tariffs":
+            if name == "lber":
                 raise APIError("Provider temporarily unavailable")
             return provider_result(name, lat, lon, **kwargs)
         with patch("API.site_lookup.fetch_source", side_effect=failing):
             result = lookup_site(42.2, -71.4)
         self.assertEqual(result["status"], "partial")
-        self.assertEqual(result["source_errors"], ["tariffs"])
+        self.assertEqual(result["source_errors"], ["lber"])
         self.assertEqual(result["sources"]["parcels"]["status"], "ok")
-        self.assertIsNone(result["sources"]["tariffs"]["retrieved_at_utc"])
-        self.assertEqual(fields(result)["tariff_candidates"]["status"], "unavailable")
+        self.assertIsNone(result["sources"]["lber"]["retrieved_at_utc"])
+        self.assertEqual(fields(result)["annual_energy_candidates"]["status"], "unavailable")
 
     def test_multiple_parcels_are_not_silently_selected(self):
         def boundary(name, lat, lon, **kwargs):
@@ -124,7 +141,7 @@ class LookupTests(unittest.TestCase):
         sample = {"records": [{"UBID": "nearby-1", "Street_Address": "2 EXAMPLE ST", "City": "Holliston",
                                "Gross_Floor_Area": 12000, "Total_Electricity_Use_Purchased_From_Grid_kBtu": 3412.141633}],
                   "truncated": False}
-        with patch("API.ma_sources.query_point", return_value=sample):
+        with patch("API.ma_sources.get_json", return_value={"features":[{"attributes":sample["records"][0]}]}):
             result = fetch_source("lber", 42.2, -71.4)
         record = result["records"][0]
         self.assertAlmostEqual(record["annual_electricity_kwh"], 1000)
@@ -141,14 +158,17 @@ class HTTPTests(unittest.TestCase):
         with patch("API.site_lookup.fetch_source") as fetch:
             self.assertEqual(self.client.get("/health").json(), {"status": "ok"})
             catalog = self.client.get("/sources").json()
-            self.assertEqual(len(catalog["automated"]), 8)
+            self.assertEqual(catalog["api_version"], app.version)
+            self.assertEqual(catalog["schema_version"], "1.3")
+            self.assertEqual(catalog["table_columns"], TABLE_COLUMNS)
+            self.assertEqual(len(catalog["automated"]), len(SOURCES))
             self.assertEqual(catalog["references"]["permits"]["status"], "manual_lookup")
             self.assertEqual(self.client.get("/openapi.json").status_code, 200)
             fetch.assert_not_called()
 
     @patch("API.site_lookup.fetch_source", side_effect=provider_result)
     def test_http_endpoint_and_selected_sources(self, fetch):
-        response = self.client.get("/site", params={"latitude": 42.2, "longitude": -71.4, "sources": "parcels,buildings"})
+        response = self.client.get("/site", params={"latitude": 42.2, "longitude": -71.4, "sources": "parcels,buildings", "download_evidence": False, "include_all": True})
         self.assertEqual(response.status_code, 200)
         self.assertEqual(len(response.json()["checklist"]), 12)
         self.assertEqual(set(response.json()["sources"]), {"utilities", "parcels", "buildings"})
@@ -165,8 +185,8 @@ class HTTPTests(unittest.TestCase):
         self.assertEqual(response.headers["access-control-allow-origin"], "http://localhost:5173")
 
     @patch("API.site_lookup.fetch_source", side_effect=provider_result)
-    def test_four_column_http_table(self, fetch):
-        response = self.client.get("/site/table", params={"latitude": 42.2, "longitude": -71.4, "sources": "parcels,buildings"})
+    def test_dated_coordinate_http_table(self, fetch):
+        response = self.client.get("/site/table", params={"latitude": 42.2, "longitude": -71.4, "sources": "parcels,buildings", "download_evidence": False, "include_all": True})
         self.assertEqual(response.status_code, 200)
         rows = response.json()
         self.assertTrue(rows)
@@ -186,23 +206,22 @@ class ChecklistTableTests(unittest.TestCase):
         self.assertEqual(frame["checklist item"].n_unique(), 12)
         self.assertEqual(values["address"]["subcategory_value"], "1 EXAMPLE ST")
         self.assertEqual(values["ground_elevation_m"]["subcategory_value"], "0")
-        self.assertIsNone(values["interval_data"]["subcategory_value"])
-        self.assertIsNone(values["interval_data"]["data_source"])
+        self.assertNotIn("interval_data", values)
         self.assertEqual(values["utility_candidates[1].provider"]["subcategory_value"], "Example Utility")
         self.assertEqual(values["annual_energy_candidates[1].annual_electricity_kwh"]["subcategory_value"], "1000")
         self.assertIsNone(values["existing_site_solar"]["subcategory_value"])
         self.assertFalse(any("records_path" in (row["subcategory_value"] or "") for row in frame.to_dicts()))
 
-    def test_source_error_stays_visible_with_null_tariff_value(self):
+    def test_source_error_stays_visible_with_null_disclosure_value(self):
         def limited(name, lat, lon, **kwargs):
-            if name == "tariffs":
+            if name == "lber":
                 raise APIError("HTTP 429 OVER_RATE_LIMIT")
             return provider_result(name, lat, lon, **kwargs)
         with patch("API.site_lookup.fetch_source", side_effect=limited):
             frame = lookup_table(42.2, -71.4)
         values = {row["subcategory_name"]: row for row in frame.to_dicts()}
-        self.assertIsNone(values["tariff_candidates"]["subcategory_value"])
-        self.assertIn("429", values["tariff_candidates.error"]["subcategory_value"])
+        self.assertIsNone(values["annual_energy_candidates"]["subcategory_value"])
+        self.assertIn("429", values["annual_energy_candidates.error"]["subcategory_value"])
         self.assertEqual(values["address"]["subcategory_value"], "1 EXAMPLE ST")
 
     def test_ambiguous_addresses_stay_labeled(self):
@@ -215,8 +234,8 @@ class ChecklistTableTests(unittest.TestCase):
             frame = lookup_table(42.2, -71.4)
         values = {row["subcategory_name"]: row["subcategory_value"] for row in frame.to_dicts()}
         self.assertNotIn("address", values)
-        self.assertIn("address.ambiguous_candidates", values)
-        self.assertIn("2 EXAMPLE ST", values["address.ambiguous_candidates"])
+        self.assertIn("address.ambiguous_candidates[2]", values)
+        self.assertIn("2 EXAMPLE ST", values["address.ambiguous_candidates[2]"])
 
 
 if __name__ == "__main__":
