@@ -50,9 +50,9 @@ def record_location(source, record, latitude, longitude, match_method):
             x = (min(p[0] for p in points) + max(p[0] for p in points)) / 2
             y = (min(p[1] for p in points) + max(p[1] for p in points)) / 2
             basis = "Derived polygon bounding-box center; not a surveyed site point"
-        elif source in ("request", "elevation"):
+        elif source == "request":
             y, x = latitude, longitude
-            basis = "Caller-provided coordinate" if source == "request" else "Requested model sampling point; native cell center not supplied"
+            basis = "Caller-provided coordinate"
         else:
             y = x = None
             basis = "Municipality-wide record; no site coordinate supplied" if source == "utilities" else "Source location not supplied"

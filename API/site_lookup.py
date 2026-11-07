@@ -16,6 +16,8 @@ from .ma_sources import (
     fetch_source,
 )
 from .provenance import source_date
+from .scope import SCOPE, intake_record
+from .units import value_unit, COORDINATE_UNIT
 from .evidence import save_evidence
 from .location import record_location
 from .checklist_table import checklist_table
@@ -24,15 +26,14 @@ import json
 from urllib.parse import urlencode
 
 logger = logging.getLogger(__name__)
-SCHEMA_VERSION = "1.3"
+SCHEMA_VERSION = "2.1"
 
-# Category ID, label, expected fields, related sources and the next human input.
-# All sites use these same categories. Missing private/engineering inputs stay
-# missing. Candidate data does not fill a confirmed site-specific field.
+# Option 1 records existing facts and gaps for later stages; it does not design,
+# review codes, schedule work or track compliance for a proposed installation.
 CATEGORIES = [
     (
         "identity",
-        "Site identity and assessor records",
+        "Site and property",
         [
             "address",
             "municipality",
@@ -40,52 +41,38 @@ CATEGORIES = [
             "latitude",
             "longitude",
             "parcel_id",
+            "municipal_parcel_id",
+            "recorded_owner",
             "building_use",
             "assessor_building_area_sqft",
-            "parcel_attributes",
+            "parcel_land_area",
+            "parcel_land_area_unit",
+            "year_built",
+            "number_of_stories",
+            "zoning",
             "assessor_records",
+            "land_records",
         ],
-        ["parcels", "assessor_records"],
-        "Review published parcel and municipal property boundaries and dates.",
+        ["parcels", "assessor_records", "land_records"],
+        "Review parcel, building and document identity; keep conflicting or missing facts explicit.",
     ),
     (
-        "ownership",
-        "Reported ownership and recorded documents",
-        ["recorded_owner", "land_records"],
-        ["parcels", "land_records"],
-        "Inspect retrieved registry references and public recorded documents; blocked access remains explicit.",
-    ),
-    (
-        "operations",
-        "Published project narratives",
-        ["municipal_archives"],
-        ["municipal_archives", "permits"],
-        "Review public permit scopes and later alterations without inferring actual operating schedules.",
-    ),
-    (
-        "meters",
-        "Published service and building relationships",
+        "utility",
+        "Existing utility and service relationships",
         ["utility_candidates", "public_service_relationships"],
-        ["utilities", "electrical_permits", "assessor_records"],
-        "Parcel/address links are candidates; public meter counts are not private account identifiers.",
+        ["utilities", "electrical_permits"],
+        "Utility territories and historical meter/service records are candidates until matched to the building.",
     ),
     (
-        "billing",
-        "Public utility schedules",
-        ["tariff_candidates"],
-        ["tariffs"],
-        "Published schedules are candidates; eligibility is not established from coordinates.",
-    ),
-    (
-        "load",
-        "Annual public building energy disclosures",
-        ["annual_energy_candidates"],
-        ["lber"],
-        "Review reporting boundaries, years and fuels before assigning disclosure data to a building.",
+        "energy",
+        "Published electricity data and rate schedules",
+        ["annual_energy_candidates", "tariff_candidates"],
+        ["lber", "tariffs"],
+        "Match reporting boundaries and schedule dates; annual electricity is not an interval load profile or a savings estimate.",
     ),
     (
         "electrical",
-        "Published electrical evidence",
+        "Existing electrical information",
         [
             "service_voltage_v",
             "service_phases",
@@ -97,72 +84,33 @@ CATEGORIES = [
             "document_findings",
         ],
         ["electrical_permits", "municipal_archives"],
-        "Quoted ratings identify historical/public evidence, not verified current installations.",
+        "Retain source/page/date for published electrical evidence; historical mentions do not confirm the current installation.",
     ),
     (
         "existing_systems",
-        "Public energy-system records",
+        "Existing onsite energy equipment",
         [
             "existing_site_solar",
             "existing_generators",
             "existing_batteries",
             "transfer_switches",
-            "interconnection_agreement",
             "solar_permit_candidates",
-            "masscec_context",
         ],
-        ["solar_permits", "masscec"],
-        "Unidentified municipal PTS systems are context, not facility matches.",
+        ["solar_permits", "electrical_permits"],
+        "Existing-equipment evidence is not a proposed battery design; unknown ratings remain missing.",
     ),
     (
-        "placement",
-        "Published site geometry and imagery",
-        ["mapped_building_id", "roofprint_area_sqft", "public_site_plans"],
-        ["buildings", "assessor_records"],
-        "Imagery covers the parcel envelope; no clearance or placement suitability is inferred.",
-    ),
-    (
-        "construction",
-        "Public environmental and terrain screening",
+        "documents",
+        "Site geometry and historical documents",
         [
-            "flood_zone",
-            "ground_elevation_m",
-            "lidar_samples",
-            "wetland_candidates",
-            "environmental_candidates",
-            "activity_use_candidates",
-            "habitat_candidates",
-        ],
-        [
-            "flood",
-            "lidar",
-            "wetlands",
-            "environmental",
-            "activity_use_limits",
-            "protected_habitat",
-        ],
-        "Published screening layers and lidar samples do not establish absence of constraints.",
-    ),
-    (
-        "approvals",
-        "Public authorities and submission references",
-        [
-            "zoning",
-            "building_ahj",
-            "fire_ahj",
+            "mapped_building_id",
+            "roofprint_area_sqft",
+            "public_site_plans",
+            "municipal_archives",
             "permit_history",
-            "applicable_requirements",
-            "submission_excerpts",
         ],
-        ["public_resources", "municipal_archives"],
-        "Contacts and quoted rules require jurisdiction/applicability review; no binding BESS design requirement is inferred.",
-    ),
-    (
-        "system",
-        "Public equipment and document references",
-        ["equipment_document_references"],
-        ["municipal_archives", "assessor_records"],
-        "Retain published document dates, page references and proposed/approved/as-built mentions separately.",
+        ["buildings", "assessor_records", "municipal_archives", "permits"],
+        "Use public imagery, property cards and old plans as intake evidence; confirm address, dates and revisions.",
     ),
 ]
 
@@ -185,6 +133,7 @@ def _run_source(
         "description": info["description"],
         "data_kind": info["data_kind"],
         "match_method": info["match_method"],
+        "coverage": info["coverage"],
     }
     try:
         result.update(
@@ -198,6 +147,11 @@ def _run_source(
                 refresh=refresh,
             )
         )
+        result["records"] = [
+            projected
+            for record in result["records"]
+            if (projected := intake_record(name, record))
+        ]
         result.setdefault(
             "status",
             "partial"
@@ -229,11 +183,16 @@ def _run_source(
     ):
         endpoint = (
             info["url"] + "/query"
-            if name
-            not in ("permits", "electrical_permits", "solar_permits", "elevation")
+            if name not in ("permits", "electrical_permits", "solar_permits")
             else info["url"]
         )
         result["query_url"] = endpoint + "?" + urlencode(result["query"])
+    result.setdefault(
+        "checked_at_utc",
+        result["attempted_at_utc"]
+        if result["status"] not in ("error", "blocked", "unsupported")
+        else None,
+    )
     if name in DEPENDENT_SOURCES and not result.get("query_url"):
         public_query = result.get("query") or {}
         public_url = (
@@ -243,6 +202,13 @@ def _run_source(
         )
         if public_url:
             result["query_url"] = public_url
+    if result["status"] == "unsupported" or (
+        name in ("assessor_records", "municipal_archives")
+        and result["status"] == "blocked"
+        and not result.get("query_url")
+    ):
+        result["source_url"] = None
+        result["query_url"] = None
     for record in result["records"]:
         record["_location"] = record_location(
             name,
@@ -262,7 +228,7 @@ def _run_source(
     return result
 
 
-def _published_field(results, source, column, *, unit=None):
+def _published_field(results, source, column):
     """Expose ambiguous intersections rather than choosing the first record."""
     result = results.get(source, {})
     records = result.get("records", [])
@@ -270,7 +236,7 @@ def _published_field(results, source, column, *, unit=None):
     status = "missing"
     if source not in results:
         status = "not_requested"
-    elif result["status"] in ("error", "blocked"):
+    elif result["status"] in ("error", "blocked", "unsupported"):
         status = "unavailable"
     elif values:
         status = (
@@ -281,7 +247,7 @@ def _published_field(results, source, column, *, unit=None):
     record = values[0] if status == "unreviewed" else {}
     return {
         "value": record.get(column),
-        "unit": unit,
+        "unit": value_unit(source, column, record.get(column), record),
         "status": status,
         "source_id": source,
         "source_url": result.get("source_url"),
@@ -305,6 +271,7 @@ def _published_field(results, source, column, *, unit=None):
         "candidates": [
             {
                 "value": r[column],
+                "unit": value_unit(source, column, r[column], r),
                 "record_id": next(
                     (r[k] for k in ("OBJECTID", "FID", "UBID", "STRUCT_ID") if k in r),
                     None,
@@ -320,25 +287,28 @@ def _published_field(results, source, column, *, unit=None):
 def build_checklist(results, latitude, longitude, municipality):
     """The same field contract for every site, including unresolved inputs."""
     published = {
-        "address": ("parcels", "SITE_ADDR", None),
-        "parcel_id": ("parcels", "LOC_ID", None),
-        "recorded_owner": ("parcels", "OWNER1", None),
-        "building_use": ("parcels", "USE_DESC", None),
-        "assessor_building_area_sqft": ("parcels", "BLD_AREA", "ft2"),
-        "zoning": ("parcels", "ZONING", None),
-        "mapped_building_id": ("buildings", "STRUCT_ID", None),
-        "roofprint_area_sqft": ("buildings", "AREA_SQ_FT", "ft2"),
-        "flood_zone": ("flood", "FLD_ZONE", None),
-        "ground_elevation_m": ("elevation", "elevation_m", "m"),
+        "address": ("parcels", "SITE_ADDR"),
+        "parcel_id": ("parcels", "LOC_ID"),
+        "recorded_owner": ("parcels", "OWNER1"),
+        "building_use": ("parcels", "USE_DESC"),
+        "assessor_building_area_sqft": ("parcels", "BLD_AREA"),
+        "zoning": ("parcels", "ZONING"),
+        "mapped_building_id": ("buildings", "STRUCT_ID"),
+        "roofprint_area_sqft": ("buildings", "AREA_SQ_FT"),
+        "municipal_parcel_id": ("parcels", "MAP_PAR_ID"),
+        "parcel_land_area": ("parcels", "LOT_SIZE"),
+        "parcel_land_area_unit": ("parcels", "LOT_UNITS"),
+        "year_built": ("parcels", "YEAR_BUILT"),
+        "number_of_stories": ("parcels", "STORIES"),
     }
     evidence = {
-        field: _published_field(results, source, column, unit=unit)
-        for field, (source, column, unit) in published.items()
+        field: _published_field(results, source, column)
+        for field, (source, column) in published.items()
     }
     for field, value in (("latitude", latitude), ("longitude", longitude)):
         evidence[field] = {
             "value": value,
-            "unit": "degrees",
+            "unit": COORDINATE_UNIT,
             "status": "provided",
             "source_id": "request",
         }
@@ -372,7 +342,7 @@ def build_checklist(results, latitude, longitude, municipality):
             if records
             else (
                 "unavailable"
-                if result.get("status") in ("error", "blocked")
+                if result.get("status") in ("error", "blocked", "unsupported")
                 else "missing"
                 if source in results
                 else "not_requested"
@@ -383,17 +353,10 @@ def build_checklist(results, latitude, longitude, municipality):
             "data_kind": result.get("data_kind"),
         }
     for field, source in {
-        "parcel_attributes": "parcels",
         "assessor_records": "assessor_records",
         "land_records": "land_records",
         "municipal_archives": "municipal_archives",
         "tariff_candidates": "tariffs",
-        "masscec_context": "masscec",
-        "lidar_samples": "lidar",
-        "wetland_candidates": "wetlands",
-        "environmental_candidates": "environmental",
-        "activity_use_candidates": "activity_use_limits",
-        "habitat_candidates": "protected_habitat",
     }.items():
         r = results.get(source, {})
         evidence[field] = {
@@ -407,7 +370,7 @@ def build_checklist(results, latitude, longitude, municipality):
             "status": "candidate"
             if r.get("records")
             else "unavailable"
-            if r.get("status") in ("error", "blocked")
+            if r.get("status") in ("error", "blocked", "unsupported")
             else "not_requested"
             if not r
             else "missing",
@@ -438,34 +401,6 @@ def build_checklist(results, latitude, longitude, municipality):
         "source_id": "electrical_permits",
         "status": "candidate",
     }
-    resources = results.get("public_resources", {})
-    if resources.get("requirements"):
-        evidence["submission_excerpts"] = {
-            "value": {
-                "record_count": len(resources["requirements"]),
-                "records_path": "sources.public_resources.requirements",
-            },
-            "source_id": "public_resources",
-            "status": "candidate",
-        }
-    for field in ("building_ahj", "fire_ahj", "applicable_requirements"):
-        indices = [
-            index
-            for index, record in enumerate(resources.get("records", []))
-            if record["field"] == field
-        ]
-        if indices:
-            matches = [resources["records"][index] for index in indices]
-            evidence[field] = {
-                "value": matches[0]["title"]
-                if len(matches) == 1
-                else [{"title": r["title"], "url": r["url"]} for r in matches],
-                "status": "reference_only",
-                "source_id": "public_resources",
-                "source_record_indices": indices,
-                "source_url": matches[0]["url"],
-                "retrieved_at_utc": resources["retrieved_at_utc"],
-            }
     return [
         {
             "id": category,
@@ -474,6 +409,13 @@ def build_checklist(results, latitude, longitude, municipality):
                 {
                     "name": field,
                     **evidence.get(field, {"value": None, "status": "missing"}),
+                    "unit": evidence[field]["unit"]
+                    if field in evidence and "unit" in evidence[field]
+                    else value_unit(
+                        evidence.get(field, {}).get("source_id"),
+                        field,
+                        evidence.get(field, {}).get("value"),
+                    ),
                 }
                 for field in fields
             ],
@@ -492,7 +434,6 @@ def lookup_site(
     refresh=False,
     download_evidence=True,
     evidence_dir="data/evidence",
-    documents=None,
 ):
     """Fetch public evidence for a Massachusetts point. Only two arguments needed.
 
@@ -515,7 +456,7 @@ def lookup_site(
         raise ValueError(
             f"Unknown sources: {', '.join(sorted(unknown))}. See /sources."
         )
-    parcel_dependencies = DEPENDENT_SOURCES - {"masscec", "tariffs"}
+    parcel_dependencies = DEPENDENT_SOURCES - {"tariffs"}
     if set(selected) & parcel_dependencies and "parcels" not in selected:
         selected.insert(0, "parcels")
     results = {"utilities": _run_source("utilities", latitude, longitude, None)}
@@ -582,6 +523,7 @@ def lookup_site(
     ]
     site = {
         "schema_version": SCHEMA_VERSION,
+        "scope": SCOPE,
         "status": "partial" if problems else "ok",
         "location": {
             "latitude": latitude,
@@ -606,6 +548,12 @@ def lookup_site(
             if field["value"] is None
         ],
         "public_only": True,
+        "input_policy": {
+            "site_inputs": ["latitude", "longitude"],
+            "uploaded_files_used": False,
+            "manual_document_input": False,
+            "region": "Massachusetts",
+        },
         "notes": [
             "Source status ok means records were retrieved, not verified against the facility or meter.",
             "Nearby LBER and permit records are candidates. Their coordinates and distance do not establish a site match.",
@@ -628,7 +576,7 @@ def lookup_site(
         for name, r in results.items()
     ]
     site["evidence"] = (
-        save_evidence(site, evidence_dir, refresh=refresh, documents=documents)
+        save_evidence(site, evidence_dir, refresh=refresh)
         if download_evidence
         else None
     )
@@ -636,9 +584,6 @@ def lookup_site(
         files = site["evidence"]["files"]
         summaries = {
             "document_findings": site.get("document_findings", []),
-            "submission_excerpts": results.get("public_resources", {}).get(
-                "requirements", []
-            ),
             "public_site_plans": [
                 {
                     "title": f["source_title"],
@@ -654,7 +599,6 @@ def lookup_site(
                     for w in ("plan", "sketch", "blueprint", "drawing")
                 )
             ],
-            "equipment_document_references": site.get("document_findings", []),
         }
         site["public_site_plans"] = summaries["public_site_plans"]
         for category in checklist:
@@ -663,10 +607,7 @@ def lookup_site(
                     field.update(
                         value={
                             "record_count": len(summaries[field["name"]]),
-                            "evidence_path": {
-                                "submission_excerpts": "sources.public_resources.requirements",
-                                "equipment_document_references": "document_findings",
-                            }.get(field["name"], field["name"]),
+                            "evidence_path": field["name"],
                         },
                         status="candidate",
                     )

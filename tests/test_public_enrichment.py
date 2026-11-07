@@ -44,19 +44,15 @@ class PublicEnrichmentTests(unittest.TestCase):
             self.assertFalse((Path(folder) / 'files').exists())
 
     @patch('API.site_lookup.fetch_source', side_effect=provider)
-    def test_neighbors_and_contacts_do_not_become_verified_site_ratings(self, fetch):
+    def test_neighbors_do_not_become_verified_site_ratings(self, fetch):
         site = lookup_site(42.359, -71.093, download_evidence=False)
         rows = {r['subcategory_name']: r for r in checklist_table(site).to_dicts()}
         self.assertIsNone(rows['service_voltage_v']['subcategory_value'])
         voltage = rows['electrical_permit_candidates[1].reported_existing_service_volts']
         self.assertEqual(voltage['subcategory_value'], '480')
         self.assertGreater(voltage['source_distance_m'], 100)
-        self.assertEqual(voltage['match_method'], 'within_250m_candidate')
-        self.assertIn('confirm', rows['building_ahj']['subcategory_value'])
-        fields = {f['name']: f for c in site['checklist'] for f in c['fields']}
-        self.assertEqual(fields['building_ahj']['status'], 'reference_only')
-        self.assertIsNone(rows['building_ahj']['source_latitude'])
-        self.assertIn('applicable_requirements[1].reference_url', rows)
+        self.assertNotIn('match_method', voltage)
+        self.assertEqual(site['sources']['electrical_permits']['records'][0]['_location']['match_method'], 'within_250m_candidate')
 
     def test_detailed_electrical_query_prioritizes_service_fields_and_preserves_zero(self):
         with patch('API.ma_sources.get_json', return_value=[{'id': '001', 'generators': '0', 'volts_existing_service': '208'}]) as get:
@@ -72,20 +68,20 @@ class PublicEnrichmentTests(unittest.TestCase):
         for source in ['electrical_permits', 'solar_permits']:
             with self.subTest(source=source), patch('API.ma_sources.get_json') as get:
                 result = fetch_source(source, 42.2, -71.4, municipality='HOLLISTON')
-                self.assertEqual(result['status'], 'blocked')
+                self.assertEqual(result['status'], 'unsupported')
                 get.assert_not_called()
 
     def test_reference_failure_keeps_other_public_records(self):
         def public_records(name, *args, **kwargs):
             result = provider(name, *args, **kwargs)
-            if name == 'public_resources':
-                result['resource_errors'] = [{'url': 'https://example.org/unavailable', 'error': 'HTTP 503'}]
+            if name == 'tariffs':
+                result['document_errors'] = [{'url': 'https://example.org/unavailable', 'error': 'HTTP 503'}]
             return result
         with patch('API.site_lookup.fetch_source', side_effect=public_records):
             site = lookup_site(42.359, -71.093, download_evidence=False)
         self.assertEqual(site['status'], 'partial')
-        self.assertIn('public_resources', site['source_errors'])
-        self.assertTrue(site['sources']['public_resources']['records'])
+        self.assertIn('tariffs', site['source_errors'])
+        self.assertTrue(site['sources']['parcels']['records'])
 
 
 if __name__ == '__main__':

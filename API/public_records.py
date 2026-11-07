@@ -439,36 +439,11 @@ def municipal_archive(session, municipality, context, cache_dir):
             url, params={"query": address, "limit": 25}, timeout=(10, 30)
         )
         if response.status_code in (401, 403, 429):
-            records = []
-            parcel_ids = {
-                str(p.get("MAP_PAR_ID"))
-                for p in context.get("parcels", {}).get("records", [])
-            }
-            for parcel_id in parcel_ids:
-                layer = "https://gisweb.newtonma.gov/server/rest/services/Permitting/MapServer/26"
-                params = {
-                    "f": "json",
-                    "where": "Parcels.MAP_PAR_ID='"
-                    + parcel_id.replace("'", "''")
-                    + "'",
-                    "outFields": "*",
-                    "returnGeometry": "false",
-                }
-                data = get_json(session, layer + "/query", params)
-                records.extend(
-                    {
-                        **f["attributes"],
-                        "source_url": layer + "/query?" + urlencode(params),
-                        "record_kind": "published wetland filing index; not building blueprint",
-                        "match_method": "municipal_parcel_identifier",
-                    }
-                    for f in data.get("features", [])
-                )
             return {
-                "status": "partial" if records else "blocked",
-                "records": records,
+                "status": "blocked",
+                "records": [],
                 "query": {"address": address, "url": response.url},
-                "detail": f"OpenGov address search returned HTTP {response.status_code}. Official Newton GIS wetland filing index queried by parcel as a public fallback; building blueprints remain inaccessible.",
+                "detail": f"Public address search returned HTTP {response.status_code}; no environmental-filings fallback is used for Option 1.",
             }
         response.raise_for_status()
         payload = response.json()
@@ -619,8 +594,8 @@ def land_records(session, latitude, longitude, context, cache_dir, refresh=False
         url = district.get("WEBSITE") or district.get("URL")
         row = {
             **district,
-            "source_date": "2022-04",
-            "source_date_basis": "MassGIS district dataset publication month",
+            "source_date": None,
+            "source_date_basis": "Publication date not supplied; revalidated HTTP Last-Modified is preserved in file metadata",
             "source_url": REGISTRY_ZIP,
             "record_kind": "registry jurisdiction; not a deed",
             "match_method": "district_containing_point",
@@ -665,7 +640,7 @@ def land_records(session, latitude, longitude, context, cache_dir, refresh=False
                         for a in page_links(soup, response.url)
                         if re.search(r"\.(pdf|tif|jpg)(?:\?|$)", a["url"], re.I)
                     ]
-                    documents.extend(links[:5])
+                    row["public_reference_links"] = links[:5]
                     row["document_access"] = "public_landing_page"
                     row["access_detail"] = (
                         "Book/page references resolved to this registry; no searchable deed result returned by the landing page."
@@ -682,6 +657,6 @@ def land_records(session, latitude, longitude, context, cache_dir, refresh=False
         "truncated": False,
         "document_access": "blocked_or_not_exposed"
         if not documents
-        else "unmatched_public_document_candidates",
+        else "no_parcel_matched_document",
         "limitations": "Registry district and book/page metadata are retrieved. A deed or recorded plan is marked retrieved only after an actual document response; blocked image search remains explicit.",
     }

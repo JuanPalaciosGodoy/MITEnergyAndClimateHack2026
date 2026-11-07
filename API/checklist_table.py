@@ -5,21 +5,31 @@ import json
 import polars as pl
 
 from .provenance import source_date
+from .scope import SCOPE
+from .units import value_leaves, value_unit, NOT_APPLICABLE
 from .location import LOCATION_COLUMNS, record_location
 
 TABLE_COLUMNS = [
     "checklist item",
     "subcategory_name",
     "subcategory_value",
-    "data_source",
+    "value_unit_of_measurement",
     "source_title",
     "fetched_at_utc",
+    "checked_at_utc",
     "source_date",
     "source_date_basis",
+    "searched_latitude",
+    "searched_longitude",
+    "source_latitude",
+    "source_longitude",
+    "source_distance_m",
+    "source_location_basis",
+    "data_source",
     "local_file",
     "file_url",
-    *LOCATION_COLUMNS,
 ]
+
 TABLE_SCHEMA = {
     column: (pl.Float64 if column in LOCATION_COLUMNS[:5] else pl.String)
     for column in TABLE_COLUMNS
@@ -39,7 +49,7 @@ CANDIDATE_COLUMNS = {
         "amps_new_service": "reported_new_service_amps",
         "photovoltaic_panels": "reported_pv_panel_count",
         "generators": "reported_generator_count",
-        "kva": "reported_kva_raw",
+        "kva": "reported_ups_total_kva",
         "proposed_work_description": "work_description",
         "description": "description",
     },
@@ -54,9 +64,8 @@ CANDIDATE_COLUMNS = {
         "watt_capacity": "reported_watt_capacity_raw",
         "photovoltaic_panel_count": "reported_panel_count",
         "inverter_make_and_model": "reported_inverter",
-        "battery_storage_capacity": "reported_battery_field_raw",
+        "battery_storage_capacity": "reported_battery_installation_flag",
     },
-    "applicable_requirements": {"title": "reference_title", "url": "reference_url"},
     "permit_history": {
         "id": "permit_id",
         "full_address": "address",
@@ -76,22 +85,12 @@ CANDIDATE_COLUMNS = {
 }
 
 
-# The compact intake view omits workflow permissions, financial modeling and
-# final equipment sizing. The full twelve-category contract remains available.
-INTAKE_OMIT = set()
-OPTIONAL_FIELDS = {}
+# Both compatibility views are the same narrow Option 1 record.
 GENERIC_PUBLIC_FIELDS = {
-    "parcel_attributes",
     "assessor_records",
     "land_records",
     "municipal_archives",
     "tariff_candidates",
-    "masscec_context",
-    "lidar_samples",
-    "wetland_candidates",
-    "environmental_candidates",
-    "activity_use_candidates",
-    "habitat_candidates",
 }
 EXCLUDE_ATTRIBUTES = {
     "geometry",
@@ -108,8 +107,12 @@ def checklist_table(site, *, include_all=False):
 
     Year-only source dates stay year-only. Null dates do not mean today's date.
     Failed fetches have null fetched_at_utc. Candidate dates belong to that
-    candidate, not to the site. include_all exposes the full original checklist.
+    candidate, not to the site. include_all is a compatibility flag and cannot restore removed phases.
     """
+    if site.get("scope") != SCOPE:
+        raise ValueError(
+            "This response predates the Option 1 scope. Fetch the site again before building the table."
+        )
     rows = []
     cached_assets = [
         a for source in site["sources"].values() for a in source.get("artifacts", [])
@@ -117,20 +120,14 @@ def checklist_table(site, *, include_all=False):
     assets_by_url = {
         asset["source_url"]: asset
         for asset in [*cached_assets, *(site.get("evidence") or {}).get("files", [])]
-        if asset["status"] == "ok" and asset["kind"] != "extracted_text"
+        if asset["status"] == "ok"
+        and asset["kind"] != "extracted_text"
+        and asset.get("source_url")
     }
     latitude, longitude = site["location"]["latitude"], site["location"]["longitude"]
     for category in site["checklist"]:
         for field in category["fields"]:
             name = field["name"]
-            if not include_all and (
-                name in INTAKE_OMIT
-                or (
-                    name in OPTIONAL_FIELDS
-                    and OPTIONAL_FIELDS[name] not in site["sources"]
-                )
-            ):
-                continue
             source_id = field.get("source_id")
             source = site["sources"].get(source_id, {})
             url = (
@@ -213,14 +210,21 @@ def checklist_table(site, *, include_all=False):
                 ]
             elif len(records) == 1:
                 values = [(name, field["value"], records[0])]
-            if source.get("status") in ("error", "blocked"):
+            if source.get("status") in ("error", "blocked", "unsupported"):
                 values.append(
                     (
-                        f"{name}.error",
+                        f"{name}.coverage"
+                        if source.get("status") == "unsupported"
+                        else f"{name}.error",
                         source.get("error") or source.get("detail") or source["status"],
                         None,
                     )
                 )
+            values = [
+                (leaf, item, record)
+                for label, value, record in values
+                for leaf, item in value_leaves(label, value)
+            ]
             for subcategory, item, record in values:
                 date, basis = (
                     source_date(source_id, record, field.get("source_field"))
@@ -249,6 +253,7 @@ def checklist_table(site, *, include_all=False):
                 record_title = (record or {}).get("source_title") or title
                 if isinstance(item, dict) and subcategory.endswith(".detail_url"):
                     item = item.get("url")
+                measurement_unit = value_unit(source_id, subcategory, item, record)
                 if item is not None:
                     item = (
                         json.dumps(item, ensure_ascii=False)
@@ -260,11 +265,14 @@ def checklist_table(site, *, include_all=False):
                         "checklist item": category["title"],
                         "subcategory_name": subcategory,
                         "subcategory_value": item,
+                        "value_unit_of_measurement": measurement_unit,
                         "data_source": record_url,
                         "source_title": record_title,
                         "fetched_at_utc": artifact.get("fetched_at_utc")
                         or (record or {}).get("retrieved_at_utc")
                         or fetched,
+                        "checked_at_utc": artifact.get("checked_at_utc")
+                        or source.get("checked_at_utc"),
                         "source_date": date,
                         "source_date_basis": basis,
                         "local_file": artifact.get("local_file")
@@ -287,9 +295,12 @@ def checklist_table(site, *, include_all=False):
                 "subcategory_value": asset.get("error")
                 or asset.get("match_status")
                 or "Downloaded public source file",
+                "value_unit_of_measurement": NOT_APPLICABLE,
                 "data_source": asset["source_url"],
                 "source_title": asset["source_title"],
                 "fetched_at_utc": asset.get("fetched_at_utc"),
+                "checked_at_utc": asset.get("checked_at_utc")
+                or asset.get("fetched_at_utc"),
                 "source_date": asset.get("source_date"),
                 "source_date_basis": asset.get("source_date_basis"),
                 "local_file": asset.get("local_file"),
@@ -297,34 +308,45 @@ def checklist_table(site, *, include_all=False):
                 **{key: asset.get(key) for key in LOCATION_COLUMNS},
             }
         )
-    findings = [
-        *site.get("document_findings", []),
-        *site["sources"].get("public_resources", {}).get("requirements", []),
-    ]
-    for index, record in enumerate(findings, 1):
+    for index, record in enumerate(site.get("document_findings", []), 1):
         url = record.get("url")
         artifact = assets_by_url.get(url, {})
-        rows.append(
-            {
-                "checklist item": "Quoted public document evidence",
-                "subcategory_name": f"document_findings[{index}]",
-                "subcategory_value": json.dumps(record, ensure_ascii=False),
-                "data_source": url,
-                "source_title": record.get("source_title"),
-                "fetched_at_utc": artifact.get("fetched_at_utc"),
-                "source_date": record.get("source_date") or artifact.get("source_date"),
-                "source_date_basis": record.get("source_date_basis")
-                or "Refer to document page, date and applicability",
-                "local_file": artifact.get("local_file"),
-                "file_url": (
-                    artifact["file_url"]
+        facts = {
+            key: record[key]
+            for key in ("document_excerpt", "ratings_raw", "interpretation")
+            if key in record
+        }
+        for name, value in value_leaves(f"document_findings[{index}]", facts):
+            rows.append(
+                {
+                    "checklist item": "Quoted public document evidence",
+                    "subcategory_name": name,
+                    "subcategory_value": json.dumps(value, ensure_ascii=False)
+                    if isinstance(value, (dict, list))
+                    else str(value)
+                    if value is not None
+                    else None,
+                    "value_unit_of_measurement": value_unit(
+                        "document_findings", name, value, record
+                    ),
+                    "data_source": url,
+                    "source_title": record.get("source_title"),
+                    "fetched_at_utc": artifact.get("fetched_at_utc"),
+                    "checked_at_utc": artifact.get("checked_at_utc"),
+                    "source_date": record.get("source_date")
+                    or artifact.get("source_date"),
+                    "source_date_basis": record.get("source_date_basis")
+                    or "Refer to document page, date and applicability",
+                    "local_file": artifact.get("local_file"),
+                    "file_url": artifact["file_url"]
                     + (f"#page={record['page']}" if record.get("page") else "")
-                )
-                if artifact.get("file_url")
-                else None,
-                **record_location(None, {}, latitude, longitude, "document_candidate"),
-            }
-        )
+                    if artifact.get("file_url")
+                    else None,
+                    **record_location(
+                        None, {}, latitude, longitude, "document_candidate"
+                    ),
+                }
+            )
     return pl.DataFrame(rows, schema=TABLE_SCHEMA)
 
 
@@ -336,7 +358,6 @@ def lookup_table(
     refresh=False,
     download_evidence=True,
     evidence_dir="data/evidence",
-    documents=None,
     include_all=False,
 ):
     """Two coordinates to a dated checklist; download supporting evidence by default."""
@@ -349,6 +370,5 @@ def lookup_table(
         refresh=refresh,
         download_evidence=download_evidence,
         evidence_dir=evidence_dir,
-        documents=documents,
     )
     return checklist_table(site, include_all=include_all)

@@ -14,7 +14,7 @@ from API.ma_sources import SOURCES
 
 
 # Full-checklist checks exercise the optional MVP providers.
-ALL_CONTEXT_SOURCES = ["utilities", "parcels", "buildings", "lber", "flood", "elevation"]
+ALL_CONTEXT_SOURCES = ["utilities", "parcels", "buildings", "lber"]
 
 
 def lookup_site(*args, **kwargs):
@@ -41,8 +41,6 @@ def provider_result(name, latitude, longitude, **kwargs):
                   "Total_Electricity_Use_Purchased_From_Grid_kBtu": 3412.141633,
                   "building_id": "nearby-1", "address": "2 EXAMPLE ST", "data_year": 2025,
                   "floor_area_sqft": 12000, "annual_electricity_kwh": 1000}],
-        "flood": [{"FLD_ZONE": "X", "SFHA_TF": "F"}],
-        "elevation": [{"elevation_m": 0}],
     }[name]
     return {"records": records, "truncated": False}
 
@@ -53,14 +51,13 @@ def fields(response):
 
 class LookupTests(unittest.TestCase):
     @patch("API.site_lookup.fetch_source", side_effect=provider_result)
-    def test_same_twelve_categories_and_honest_gaps(self, fetch):
+    def test_same_six_intake_categories_and_honest_gaps(self, fetch):
         result = lookup_site(42.2, -71.4)
         values = fields(result)
         self.assertEqual(result["status"], "ok")
-        self.assertEqual(len(result["checklist"]), 12)
-        self.assertEqual(len(result["sources"]), 6)
+        self.assertEqual(len(result["checklist"]), 6)
+        self.assertEqual(len(result["sources"]), 4)
         self.assertEqual(values["address"]["value"], "1 EXAMPLE ST")
-        self.assertEqual(values["ground_elevation_m"]["value"], 0)
         self.assertEqual(values["roofprint_area_sqft"]["value"], 4000)
         self.assertEqual(values["assessor_building_area_sqft"]["value"], 12000)
         self.assertEqual(values["annual_energy_candidates"]["status"], "candidate")
@@ -96,20 +93,20 @@ class LookupTests(unittest.TestCase):
         self.assertEqual(fields(result)["address"]["status"], "ambiguous")
         self.assertEqual(len(fields(result)["address"]["candidates"]), 2)
 
-    def test_empty_flood_result_is_not_no_risk(self):
+    def test_empty_building_layer_does_not_prove_absence(self):
         def empty(name, lat, lon, **kwargs):
-            return {"records": [], "truncated": False} if name == "flood" else provider_result(name, lat, lon, **kwargs)
+            return {"records": [], "truncated": False} if name == "buildings" else provider_result(name, lat, lon, **kwargs)
         with patch("API.site_lookup.fetch_source", side_effect=empty):
             result = lookup_site(42.2, -71.4)
-        self.assertEqual(result["sources"]["flood"]["status"], "no_data")
-        self.assertIsNone(fields(result)["flood_zone"]["value"])
+        self.assertEqual(result["sources"]["buildings"]["status"], "no_data")
+        self.assertIsNone(fields(result)["mapped_building_id"]["value"])
 
     def test_source_filter_and_outside_coverage(self):
         with patch("API.site_lookup.fetch_source", side_effect=provider_result) as fetch:
             result = lookup_site(42.2, -71.4, sources=["parcels"])
         self.assertEqual(set(result["sources"]), {"utilities", "parcels"})
         self.assertEqual(fetch.call_count, 2)
-        self.assertEqual(fields(result)["flood_zone"]["status"], "not_requested")
+        self.assertEqual(fields(result)["mapped_building_id"]["status"], "not_requested")
         with patch("API.site_lookup.fetch_source", return_value={"records": [], "truncated": False}):
             with self.assertRaisesRegex(ValueError, "Massachusetts"):
                 lookup_site(40.7, -74)
@@ -139,9 +136,9 @@ class LookupTests(unittest.TestCase):
 
     def test_lber_normalization_preserves_candidates_and_units(self):
         sample = {"records": [{"UBID": "nearby-1", "Street_Address": "2 EXAMPLE ST", "City": "Holliston",
-                               "Gross_Floor_Area": 12000, "Total_Electricity_Use_Purchased_From_Grid_kBtu": 3412.141633}],
+                               "Reporting_Year":2025, "Gross_Floor_Area": 12000, "Total_Electricity_Use_Purchased_From_Grid_kBtu": 3412.141633}],
                   "truncated": False}
-        with patch("API.ma_sources.get_json", return_value={"features":[{"attributes":sample["records"][0]}]}):
+        with patch("API.ma_sources.lber_datasets",return_value=[{"name":"live edition","url":"https://example.org/lber/0"}]), patch("API.ma_sources.get_json", return_value={"features":[{"attributes":sample["records"][0]}]}):
             result = fetch_source("lber", 42.2, -71.4)
         record = result["records"][0]
         self.assertAlmostEqual(record["annual_electricity_kwh"], 1000)
@@ -159,7 +156,7 @@ class HTTPTests(unittest.TestCase):
             self.assertEqual(self.client.get("/health").json(), {"status": "ok"})
             catalog = self.client.get("/sources").json()
             self.assertEqual(catalog["api_version"], app.version)
-            self.assertEqual(catalog["schema_version"], "1.3")
+            self.assertEqual(catalog["schema_version"], "2.1")
             self.assertEqual(catalog["table_columns"], TABLE_COLUMNS)
             self.assertEqual(len(catalog["automated"]), len(SOURCES))
             self.assertEqual(catalog["references"]["permits"]["status"], "manual_lookup")
@@ -170,7 +167,7 @@ class HTTPTests(unittest.TestCase):
     def test_http_endpoint_and_selected_sources(self, fetch):
         response = self.client.get("/site", params={"latitude": 42.2, "longitude": -71.4, "sources": "parcels,buildings", "download_evidence": False, "include_all": True})
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(len(response.json()["checklist"]), 12)
+        self.assertEqual(len(response.json()["checklist"]), 6)
         self.assertEqual(set(response.json()["sources"]), {"utilities", "parcels", "buildings"})
 
     def test_invalid_parameters_and_unknown_sources(self):
@@ -191,7 +188,7 @@ class HTTPTests(unittest.TestCase):
         rows = response.json()
         self.assertTrue(rows)
         self.assertTrue(all(list(row) == TABLE_COLUMNS for row in rows))
-        self.assertEqual(len({row["checklist item"] for row in rows}), 12)
+        self.assertEqual(len({row["checklist item"] for row in rows}), 6)
         bad = self.client.get("/site/table", params={"latitude": 91, "longitude": -71})
         self.assertEqual(bad.status_code, 422)
 
@@ -203,9 +200,8 @@ class ChecklistTableTests(unittest.TestCase):
         frame = checklist_table(result)
         self.assertEqual(frame.columns, TABLE_COLUMNS)
         values = {row["subcategory_name"]: row for row in frame.to_dicts()}
-        self.assertEqual(frame["checklist item"].n_unique(), 12)
+        self.assertEqual(frame["checklist item"].n_unique(), 6)
         self.assertEqual(values["address"]["subcategory_value"], "1 EXAMPLE ST")
-        self.assertEqual(values["ground_elevation_m"]["subcategory_value"], "0")
         self.assertNotIn("interval_data", values)
         self.assertEqual(values["utility_candidates[1].provider"]["subcategory_value"], "Example Utility")
         self.assertEqual(values["annual_energy_candidates[1].annual_electricity_kwh"]["subcategory_value"], "1000")

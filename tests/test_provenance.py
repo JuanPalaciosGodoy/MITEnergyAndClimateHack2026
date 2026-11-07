@@ -13,7 +13,7 @@ from fastapi.testclient import TestClient
 
 from API.checklist_table import checklist_table
 from API.evidence import _download_file
-from API.ma_sources import DEFAULT_SOURCES, fetch_source
+from API.ma_sources import DEFAULT_SOURCES
 from API.provenance import source_date
 from API.server import app
 from API.site_lookup import lookup_site
@@ -25,15 +25,10 @@ def provider(name, *args, **kwargs):
         "parcels": [{"SITE_ADDR": "60 VASSAR ST", "LOC_ID": "parcel", "FY": 2026, "LAST_EDIT": 20250512}],
         "buildings": [{"STRUCT_ID": "outline", "SOURCEDATE": 20110000}],
         "lber": [{"UBID": "neighbor", "data_year": 2025, "latitude": 42.36, "longitude": -71.093}],
-        "flood": [{"FLD_ZONE": "X"}],
-        "elevation": [{"elevation_m": 3}],
         "electrical_permits": [{"id": "electric-1", "full_address": "2 NEIGHBOR ST", "volts_existing_service": "480",
                                 "latitude": 42.360, "longitude": -71.093,
                                 "specific_url": {"url": "https://data.cambridgema.gov/resource/hvtc-3ab9.json?$where=id='electric-1'"}}],
         "solar_permits": [],
-        "public_resources": [{"field": "building_ahj", "title": "Municipal building contact — confirm project jurisdiction", "url": "https://example.org/building"},
-                             {"field": "fire_ahj", "title": "Municipal fire contact — confirm project jurisdiction", "url": "https://example.org/fire"},
-                             {"field": "applicable_requirements", "title": "State code reference", "url": "https://example.org/code"}],
         "permits": [{"id": "1", "issue_date": "2025-02-01T00:00:00.000"},
                     {"id": "2", "issue_date": "2026-07-15T00:00:00.000"}],
     }.get(name, [])
@@ -74,8 +69,11 @@ class ProvenanceTests(unittest.TestCase):
         asset = {"source_url": "https://example.org/tile/1", "source_title": "Aerial image", "kind": "aerial_image", "source_date": "2025"}
         with tempfile.TemporaryDirectory() as folder:
             first = _download_file(session, asset, Path(folder), False)
+            session.get.return_value=Mock(status_code=304,headers={},url="https://example.org/tile/1")
             cached = _download_file(session, asset, Path(folder), False)
-            self.assertEqual(session.get.call_count, 1)
+            self.assertEqual(cached["cache_status"],"revalidated_not_modified")
+            self.assertIn("If-Modified-Since",session.get.call_args.kwargs["headers"])
+            self.assertEqual(session.get.call_count, 2)
             self.assertEqual(first["fetched_at_utc"], cached["fetched_at_utc"])
             self.assertEqual(cached["source_date"], "2025")
             self.assertEqual(cached["content_type"], "image/jpeg")

@@ -9,16 +9,21 @@ from fastapi.responses import FileResponse
 
 from .ma_sources import DEFAULT_SOURCES, REFERENCES, SOURCES
 from .site_lookup import SCHEMA_VERSION, lookup_site
+from .scope import SCOPE
+from .units import COORDINATE_UNIT
 from .checklist_table import TABLE_COLUMNS, checklist_table
 
 app = FastAPI(
-    title="EQORE Massachusetts site data",
-    description="Latitude and longitude to public checklist evidence. Unresolved customer and engineering inputs remain explicit.",
-    version="1.4.0",
+    title="EQORE Option 1 site intake",
+    description="Latitude and longitude to public checklist evidence. Unknown Massachusetts locations are queried using public sources; coverage gaps remain explicit.",
+    version="2.1.0",
 )
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=os.getenv("CORS_ORIGINS", "http://localhost:3000,http://localhost:5173,http://127.0.0.1:3000,http://127.0.0.1:5173").split(","),
+    allow_origins=os.getenv(
+        "CORS_ORIGINS",
+        "http://localhost:3000,http://localhost:5173,http://127.0.0.1:3000,http://127.0.0.1:5173",
+    ).split(","),
     allow_methods=["GET"],
     allow_headers=["*"],
 )
@@ -32,27 +37,68 @@ def health():
 
 @app.get("/sources")
 def sources():
-    """Automated providers and references requiring manual or authorized access."""
-    return {"api_version": app.version, "schema_version": SCHEMA_VERSION, "table_columns": TABLE_COLUMNS,
-            "automated": SOURCES, "default_sources": DEFAULT_SOURCES, "references": REFERENCES}
+    """Public providers, coverage and reference routes. No uploaded files are used."""
+    return {
+        "api_version": app.version,
+        "scope": SCOPE,
+        "schema_version": SCHEMA_VERSION,
+        "table_columns": TABLE_COLUMNS,
+        "table_column_units": {
+            **{
+                name: COORDINATE_UNIT
+                for name in (
+                    "searched_latitude",
+                    "searched_longitude",
+                    "source_latitude",
+                    "source_longitude",
+                )
+            },
+            "source_distance_m": "m",
+        },
+        "value_unit_policy": "Per row; not_applicable for non-measurements, unknown when a measurement unit is not established. Annual electricity units describe energy totals, not power.",
+        "automated": SOURCES,
+        "default_sources": DEFAULT_SOURCES,
+        "references": REFERENCES,
+    }
 
 
 @app.get("/site")
 def site(
-    latitude: float = Query(ge=-90, le=90, description="WGS84 latitude. Choose a point on the facility."),
+    latitude: float = Query(
+        ge=-90, le=90, description="WGS84 latitude. Choose a point on the facility."
+    ),
     longitude: float = Query(ge=-180, le=180, description="WGS84 longitude."),
-    sources: str | None = Query(default=None, description="Optional comma-separated automated source IDs. Utilities is always included."),
-    refresh: bool = Query(default=False, description="Refresh supporting downloads."),
-    download_evidence: bool = Query(default=True, description="Save provider JSON and supporting public files under data/evidence."),
+    sources: str | None = Query(
+        default=None,
+        description="Optional comma-separated automated source IDs. Utilities is always included.",
+    ),
+    refresh: bool = Query(
+        default=False,
+        description="Force full downloads; otherwise revalidate every file with the provider.",
+    ),
+    download_evidence: bool = Query(
+        default=True,
+        description="Save provider JSON and supporting public files under data/evidence.",
+    ),
 ) -> dict:
     """Return public geolocation evidence, provider results and unresolved public fields.
 
     Independent provider errors yield a partial HTTP 200 response. Invalid
     coordinates/source names and points outside MA land coverage yield 422.
     """
-    selected = [name.strip() for name in sources.split(",") if name.strip()] if sources is not None else None
+    selected = (
+        [name.strip() for name in sources.split(",") if name.strip()]
+        if sources is not None
+        else None
+    )
     try:
-        return lookup_site(latitude, longitude, sources=selected, refresh=refresh, download_evidence=download_evidence)
+        return lookup_site(
+            latitude,
+            longitude,
+            sources=selected,
+            refresh=refresh,
+            download_evidence=download_evidence,
+        )
     except ValueError as error:
         raise HTTPException(status_code=422, detail=str(error)) from None
 
@@ -61,13 +107,26 @@ def site(
 def site_table(
     latitude: float = Query(ge=-90, le=90, description="WGS84 latitude."),
     longitude: float = Query(ge=-180, le=180, description="WGS84 longitude."),
-    sources: str | None = Query(default=None, description="Optional comma-separated automated source IDs."),
-    refresh: bool = Query(default=False, description="Refresh supporting downloads."),
-    download_evidence: bool = Query(default=True, description="Download supporting public evidence."),
-    include_all: bool = Query(default=False, description="Include workflow inputs and final battery-design fields."),
+    sources: str | None = Query(
+        default=None, description="Optional comma-separated automated source IDs."
+    ),
+    refresh: bool = Query(
+        default=False,
+        description="Force full downloads; otherwise revalidate every file with the provider.",
+    ),
+    download_evidence: bool = Query(
+        default=True, description="Download supporting public evidence."
+    ),
+    include_all: bool = Query(
+        default=False,
+        description="Compatibility flag; all rows remain limited to Option 1 site intake.",
+    ),
 ) -> list[dict]:
     """Dated rows with searched/source coordinates, distance and evidence links."""
-    return checklist_table(site(latitude, longitude, sources, refresh, download_evidence), include_all=include_all).to_dicts()
+    return checklist_table(
+        site(latitude, longitude, sources, refresh, download_evidence),
+        include_all=include_all,
+    ).to_dicts()
 
 
 @app.get("/evidence/{file_path:path}", response_class=FileResponse)

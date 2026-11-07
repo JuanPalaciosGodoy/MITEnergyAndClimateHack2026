@@ -1,14 +1,12 @@
 """Dates describe the evidence, not the time we happened to download it."""
 
-from datetime import datetime, timezone
+from datetime import datetime
 
 
 def source_date(source, record, column=None):
     """Return (date, meaning), preserving year-only precision and unknown dates."""
     if record.get('source_date') is not None:
         return str(record['source_date']), record.get('source_date_basis','Publisher-supplied date')
-    if source == 'activity_use_limits' and record.get('AUL_DATE') is not None:
-        return datetime.fromtimestamp(record['AUL_DATE']/1000,timezone.utc).date().isoformat(), 'Published Activity and Use Limitation AUL_DATE; not site clearance date'
     if source == "parcels":
         if column == "LOC_ID":
             value = record.get("LAST_EDIT")

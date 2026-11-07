@@ -26,7 +26,9 @@ def page(session, url, *, params=None, data=None):
     response = (
         session.post(url, data=data, timeout=(10, 30))
         if data is not None
-        else session.get(url, params=params, timeout=(10, 30))
+        else session.get(
+            url, params=params, headers={"Cache-Control": "no-cache"}, timeout=(10, 30)
+        )
     )
     response.raise_for_status()
     return response, BeautifulSoup(response.text, "html.parser")
@@ -79,21 +81,8 @@ def text_findings(text, url, title, *, page_number=None, role="public_document")
                     "rate_assignment": "unassigned public schedule mention; inspect columns and applicability",
                 }
             )
-        elif role == "requirements":
-            if not re.search(
-                r"battery|energy storage|electrical permit|site plan|submit|shall include|UL\s*9540|NFPA\s*855",
-                line,
-                re.I,
-            ):
-                continue
-            records.append(
-                {
-                    "requirement_excerpt": line[:700],
-                    "applicability": "reference only; proposed system and project applicability not inferred",
-                }
-            )
         elif re.search(
-            r"service|switchboard|transformer|disconnect|panel|battery|generator|solar|clearance|trench|condition of approval",
+            r"service|switchboard|transformer|disconnect|panel|battery|generator|solar",
             line,
             re.I,
         ):
@@ -103,7 +92,7 @@ def text_findings(text, url, title, *, page_number=None, role="public_document")
                 re.I,
             )
             if not ratings and not re.search(
-                r"condition of approval|single.line|panel schedule|equipment schedule",
+                r"single.line|panel schedule|equipment schedule",
                 line,
                 re.I,
             ):
@@ -195,6 +184,7 @@ def saved_page(response, cache_dir, title):
     digest = hashlib.sha256(content).hexdigest()
     path = directory / ("public-page-" + digest[:20] + ".html")
     path.write_bytes(content)
+    checked = datetime.now(timezone.utc).isoformat()
     return {
         "source_url": response.url,
         "source_title": title,
@@ -202,6 +192,8 @@ def saved_page(response, cache_dir, title):
         "local_file": str(path.resolve()),
         "content_type": "text/html",
         "sha256": digest,
-        "fetched_at_utc": datetime.now(timezone.utc).isoformat(),
+        "fetched_at_utc": checked,
+        "checked_at_utc": checked,
+        "cache_status": "downloaded",
         "status": "ok",
     }

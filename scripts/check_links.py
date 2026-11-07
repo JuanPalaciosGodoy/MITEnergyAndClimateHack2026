@@ -16,7 +16,6 @@ import requests
 # Running a file directly puts scripts/, rather than the repository, on sys.path.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from API import checklist_table
-from API.ma_sources import MUNICIPAL_PORTALS, REFERENCES
 
 
 def check_url(url):
@@ -42,14 +41,13 @@ def main():
     table = checklist_table(site)
     urls = set(table['data_source'].drop_nulls().to_list())
     urls.update(s.get('query_url') or s['source_url'] for s in site['sources'].values())
-    urls.update(MUNICIPAL_PORTALS.values())
     urls.update(r['registry_website'] for r in site.get('sources',{}).get('land_records',{}).get('records',[]) if r.get('registry_website'))
-    for reference in REFERENCES.values():
+    for reference in site.get("references",{}).values():
         if reference.get('url'):
             urls.add(reference['url'])
         urls.update(reference.get('additional_urls', []))
     with ThreadPoolExecutor(max_workers=6) as pool:
-        results = list(pool.map(check_url, sorted(u for u in urls if u.startswith(('http://','https://')))))
+        results = list(pool.map(check_url, sorted(u for u in urls if isinstance(u,str) and u.startswith(('http://','https://')))))
     report = pl.from_dicts(results, infer_schema_length=None)
     output = Path('data/processed/link_checks.csv')
     output.parent.mkdir(parents=True, exist_ok=True)

@@ -1,6 +1,6 @@
-# Massachusetts public site-evidence API
+# EQORE Option 1 site intake
 
-Latitude and longitude → a Polars checklist, raw public records and a coordinate-specific evidence folder. This phase uses anonymous public sources only. No customer uploads, credentials, account information or authorization workflow is required.
+An unfamiliar Massachusetts latitude/longitude pair → a standardized record of existing site facts, public evidence, provenance and missing information. The MVP is limited to **Option 1: Site data without a site visit**. It collects inputs for later work; it does not generate battery designs, check codes or manage compliance.
 
 ```sh
 uv venv --python 3.12
@@ -11,41 +11,52 @@ uv run jupyter lab site_checklist.ipynb
 ```python
 from API import lookup_site, checklist_table
 
-site = lookup_site(42.359, -71.093)
+site = lookup_site(42.2626, -71.8023)
 table = checklist_table(site)
-print(site["public_coverage"])
 ```
 
-Start the HTTP API with `uv run uvicorn API.server:app --reload --reload-dir API --port 8002`. Call `/site/table?latitude=42.359&longitude=-71.093` for table rows or `/site` for JSON and evidence. `/sources` describes all 20 adapters; `/docs` shows the API. Returned `/evidence/...` links serve saved files. [site_api_demo.ipynb](site_api_demo.ipynb) tests every adapter and HTTP access point.
+The site record has six groups: property, utility/service relationships, electricity/rate schedules, existing electrical information, existing onsite energy equipment, and site geometry/historical documents. [docs/option1_scope.md](docs/option1_scope.md) lists the retained fields and exclusions.
 
-The notebooks require schema **1.3**. If an old notebook tab is open, close it without overwriting the updated file, reopen it, restart the kernel and run all cells. An earlier API process may still occupy port 8001; the demos use 8002.
+## Active public sources
 
-## Public coverage
+Eleven adapters support those intake fields:
 
-| Area | Implemented retrieval | Remaining public-access limits |
-| --- | --- | --- |
-| Property and service evidence | Full parcel attributes; Cambridge address-search cards/photos/sketches; Holliston anonymous assessor profile/commercial/permit/sketch sections; Northampton FY2026 PDF cards; Newton official municipal property attributes. Public electrical permits expose parcel/address/meter-count relationships. | Historical permits do not establish an active service-to-building assignment. Newton GIS attributes are not a scanned card. |
-| Municipal archives | Northampton anonymous full-text address search and public document downloads. Holliston assessor permit index fallback. Newton parcel-linked wetland filing index fallback. | Holliston full building-permit portal requires login; Newton OpenGov returns 403. Those blueprints are not retrieved. Search mentions remain candidates. |
-| Recorded property documents | Point-in-registry-district lookup using MassGIS boundaries, parcel book/page references, and an anonymous public registry access attempt. | The tested Middlesex South image/search route is blocked. No deed/plan is marked retrieved merely because jurisdiction and book/page are known. |
-| Building energy | Paginated 2024 and 2025 LBER queries within 250 m, retaining every published non-null attribute, including EUI, fuels, generation and reporting boundaries where supplied. | Reporting boundaries and nearby sites need review. Up to 1,000 records/year, with truncation exposed. |
-| Terrain and environmental | Lidar point/envelope-grid samples and TIFF; parcel/point wetlands and habitat; contamination/AUL candidates within 250 m; FEMA and Open-Meteo context. Imagery tiles cover the full parcel envelope. | These are screening layers, not clearance, engineering surveys or a complete multi-parcel facility boundary. |
-| MassCEC PTS | Public report equipment, installation, cost, capacity and utility fields as municipality context. | Report has city/ZIP, no street/coordinates; no facility assignment. First 50 municipal rows, with count/truncation exposed. |
-| Tariffs | Eversource regional and National Grid candidate PDFs, rate-component quotes, units, page references, effective dates and G-3 cross-references. | Curated major-utility coverage; no applicable facility rate or complete bill calculation inferred. |
-| Submission guidance | State building/fire/electrical/battery references; municipal responsibilities and submission excerpts; linked commercial/site-plan checklists when exposed. | Rules remain conditional on project scope. Contacts alone do not establish project jurisdiction. No project-specific compliance determination. |
+| Sources | Intake purpose |
+| --- | --- |
+| `utilities`, `parcels`, `buildings` | Published utility area, property identity/owner/use/dimensions, building outlines. |
+| `assessor_records`, `land_records` | Public property cards/photos/sketches and registry/recorded-plan references. |
+| `permits`, `electrical_permits`, `solar_permits`, `municipal_archives` | Historical public records and old plans describing the site and equipment. |
+| `lber` | Annual purchased electricity and onsite renewable generation, with property/reporting-boundary metadata. |
+| `tariffs` | Published utility rate schedules and quoted components as intake evidence. |
 
-All sources are enabled by default. Use `sources=["parcels", "buildings"]` for a smaller request. Utilities always resolves the town; parcel-dependent adapters automatically request parcels. Independent sources run in a bounded thread pool, followed by the parcel-dependent stage. There is no database, queue, crawler framework or OCR service.
+Aerial imagery is supporting evidence selected from the live MassGIS catalog. LBER editions and public tariff links are discovered on each request. No fixed example facility, supplied blueprint, private spreadsheet, account information or customer-file input is used. Detailed municipal adapters cover selected towns; statewide sources work for other Massachusetts points and gaps are explicit.
 
-## Evidence and debugging
+Removed from the active catalog and schema: code/submission requirements, AHJ workflow fields, proposed-system approval/compliance placeholders, environmental/construction screening, municipal PTS context, property valuations/sale prices, insurance/signatures and unrelated fuel/EUI/emissions attributes. `include_all=True` cannot restore them. Original public documents can contain broader information; they remain unmodified source evidence rather than extra modeled fields.
 
-Each point has `data/evidence/<latitude6>_<longitude6>/files/` for cached downloads and `runs/<UTC timestamp>/` for immutable source snapshots, manifests, JSON and CSV/Parquet exports. Its root `README.md` indexes the latest evidence. `refresh=True` refreshes cached public files while preserving older versions.
+## API and notebooks
 
-Every table row retains the original four columns plus readable source title, fetch/source dates, date meaning, local/API file links, searched/source coordinates, distance and match method. Unknown source dates and locations stay null. PDF quotes preserve page numbers; text extraction examines up to 80 pages and reports image-only content or truncation. Aerial imagery reduces zoom when necessary to cover the entire parcel envelope with at most nine tiles.
+```sh
+uv run uvicorn API.server:app --reload --reload-dir API --port 8002
+```
 
-`download_evidence=False` skips the exported evidence package; source files needed for extraction are still cached. Check `public_coverage`, `source_errors`, source `detail`/`document_errors`, and `evidence.errors`. `no_data` is an empty query, not proof of absence. `partial`, `blocked`, `unsupported` and `error` are explicit outcomes.
+- `/site?latitude=42.2626&longitude=-71.8023` returns the record, source coverage and evidence manifest.
+- `/site/table?...` returns the same record as dated, georeferenced table rows.
+- `/sources` advertises scope `option_1_site_intake`, schema **2.1**, source coverage and the 18 table columns.
+- `/evidence/...` serves returned evidence-file URLs; `/docs` documents the API.
+
+[site_checklist.ipynb](site_checklist.ipynb) demonstrates the narrow record, evidence and unknown-location checks. [site_api_demo.ipynb](site_api_demo.ipynb) tests every active adapter and HTTP access point. Reopen old notebook tabs from disk and restart their kernels. The running API must advertise schema 2.1; an older process may still occupy port 8001.
+
+## Provenance and evidence
+
+Each row includes `value_unit_of_measurement`. The CSV/table columns follow the requested order, with source links and file paths at the end. [docs/units.md](docs/units.md) documents the audited units, `unknown` versus `not_applicable`, nested-value rows and exact headers. Matching methods remain in full source JSON. Fields distinguish missing, candidate, ambiguous and unreviewed information. Historical permit or nearby disclosure data never becomes verified current equipment automatically. Zero values remain zero; unknowns remain null.
+
+`data/evidence/<latitude6>_<longitude6>/files/` holds public downloads and immutable versions. `runs/<timestamp>/` holds scoped source snapshots, manifests, JSON and CSV/Parquet exports; the root index links the latest run. Every request revalidates files with the provider. `checked_at_utc` records that check, and HTTP 304 preserves the original byte-fetch time. Network failures never silently substitute stale content. `refresh=True` forces full downloads; `download_evidence=False` skips the evidence packet.
+
+Older evidence is retained as history. Old full-scope lookup JSON must be refetched before building a new table, so fields removed from Option 1 cannot reappear through an old saved response.
 
 ```sh
 uv run python -m unittest discover -s tests -v
 uv run python scripts/check_links.py
 ```
 
-The link checker uses the short notebook's saved lookup and writes `data/processed/link_checks.csv`. Blocked/broken links fail visibly. Generated evidence, environments and credentials are Git-ignored. See [docs/site_api.md](docs/site_api.md) for the contract and limits.
+Generated evidence and environments are Git-ignored. See [docs/site_api.md](docs/site_api.md) for the contract, bounds and debugging.
