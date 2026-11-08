@@ -9,6 +9,7 @@ from ._http import get_json
 from .discovery import LBER_CATALOG, lber_datasets
 from . import public_records, public_energy
 from .scope import intake_record
+from .public_permits import attleboro_permits
 
 KBTU_PER_KWH = 3.412141633
 
@@ -33,7 +34,7 @@ SOURCES = {
         "match_method": "point_intersection",
         "geometry": True,
         "coverage": {"region": "Massachusetts", "scope": "statewide public source"},
-        "fields": "OBJECTID,LOC_ID,MAP_PAR_ID,PROP_ID,PLAN_ID,REG_ID,TOWN_ID,SITE_ADDR,CITY,ZIP,OWNER1,USE_CODE,USE_DESC,ZONING,BLD_AREA,LOT_SIZE,LOT_UNITS,YEAR_BUILT,STORIES,LS_BOOK,LS_PAGE,FY,LAST_EDIT",
+        "fields": "OBJECTID,LOC_ID,MAP_PAR_ID,PROP_ID,PLAN_ID,REG_ID,TOWN_ID,SITE_ADDR,CITY,ZIP,OWNER1,USE_CODE,USE_DESC,ZONING,BLD_AREA,LOT_SIZE,LOT_UNITS,YEAR_BUILT,STORIES,STYLE,UNITS,LS_BOOK,LS_PAGE,FY,LAST_EDIT",
     },
     "buildings": {
         "title": "MassGIS — building structures and roof outlines",
@@ -58,16 +59,16 @@ SOURCES = {
         "coverage": {"region": "Massachusetts", "scope": "statewide public source"},
     },
     "permits": {
-        "title": "City of Cambridge — Permit Finder",
+        "title": "Municipal public permit history",
         "url": "https://data.cambridgema.gov/resource/3wsm-e5jx.json",
-        "description": "Up to ten nearby Cambridge permits within 250 m, retained as candidates "
-        "rather than confirmed site records.",
+        "description": "Cambridge nearby permit candidates within 250 m; Attleboro anonymous "
+        "address search and public plan attachments. Historical work does not establish current equipment.",
         "data_kind": "published_permit_candidates",
         "match_method": "within_250m_candidate",
         "coverage": {
             "region": "Massachusetts",
             "scope": "municipal adapter",
-            "municipalities": ["CAMBRIDGE"],
+            "municipalities": ["CAMBRIDGE", "ATTLEBORO"],
         },
     },
     "electrical_permits": {
@@ -149,6 +150,7 @@ SOURCES = {
 
 DEFAULT_SOURCES = list(SOURCES)
 DEPENDENT_SOURCES = {
+    "permits",
     "assessor_records",
     "municipal_archives",
     "land_records",
@@ -181,6 +183,7 @@ REFERENCES = {
 }
 
 MUNICIPAL_PORTALS = {
+    "ATTLEBORO": "https://permiteyes.net/Attleboro/building/homepage.asp",
     "HOLLISTON": "https://www.townofholliston.us/187/Building",
     "NEWTON": "https://newtonma.portal.opengov.com/",
     "NORTHAMPTON": "https://northamptonma.portal.opengov.com/",
@@ -265,12 +268,15 @@ def fetch_source(
                 session, municipality, context, cache_dir, refresh
             )
         if source in ("permits", "electrical_permits", "solar_permits"):
+            if source == "permits" and municipality == "ATTLEBORO":
+                return attleboro_permits(session, context, cache_dir)
             if municipality != "CAMBRIDGE":
+                coverage = "Cambridge and Attleboro" if source == "permits" else "Cambridge"
                 return {
                     "status": "unsupported",
                     "records": [],
                     "truncated": False,
-                    "detail": f"This permit adapter covers Cambridge; no adapter is configured for {municipality or 'the unresolved municipality'}. Statewide sources still query the requested point. No sample-site records are substituted.",
+                    "detail": f"This permit adapter covers {coverage}; no adapter is configured for {municipality or 'the unresolved municipality'}. Statewide sources still query the requested point. No sample-site records are substituted.",
                 }
             where = f"within_circle(coordinates, {latitude}, {longitude}, 250)"
             if source == "electrical_permits":

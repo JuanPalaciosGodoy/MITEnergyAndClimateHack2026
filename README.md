@@ -17,6 +17,8 @@ table = checklist_table(site)
 
 The site record has six groups: property, utility/service relationships, electricity/rate schedules, existing electrical information, existing onsite energy equipment, and site geometry/historical documents. [docs/option1_scope.md](docs/option1_scope.md) lists the retained fields and exclusions.
 
+[Excel checklist coverage](docs/checklist_coverage.md) maps each original category to the public intake fields and remaining gaps. Attleboro's anonymous permit search now discovers address-matched historical records and public plan attachments dynamically. Both notebooks show canonical field coverage separately from supporting metadata; neighboring LBER addresses and partial tariff failures remain explicit.
+
 ## Active public sources
 
 Eleven adapters support those intake fields:

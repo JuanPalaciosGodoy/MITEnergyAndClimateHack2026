@@ -10,10 +10,10 @@ PROVENANCE = set(
 )
 RECORD_FIELDS = {
     "utilities": "TOWN TOWN_ID ELEC",
-    "parcels": "OBJECTID LOC_ID MAP_PAR_ID PROP_ID PLAN_ID REG_ID TOWN_ID SITE_ADDR CITY ZIP OWNER1 USE_CODE USE_DESC ZONING BLD_AREA LOT_SIZE LOT_UNITS YEAR_BUILT STORIES LS_BOOK LS_PAGE FY LAST_EDIT",
+    "parcels": "OBJECTID LOC_ID MAP_PAR_ID PROP_ID PLAN_ID REG_ID TOWN_ID SITE_ADDR CITY ZIP OWNER1 USE_CODE USE_DESC ZONING BLD_AREA LOT_SIZE LOT_UNITS YEAR_BUILT STORIES STYLE UNITS LS_BOOK LS_PAGE FY LAST_EDIT",
     "buildings": "OBJECTID STRUCT_ID AREA_SQ_FT SOURCEDATE",
     "lber": "FID UBID Latitude Longitude latitude longitude Street_Address City ZIP_Code Property_Type Property_Name Gross_Floor_Area Parent_Child_Status Reporting_Boundary Reporting_Year Data_Year Year_Built Total_Electricity_Use_Purchased_From_Grid_kBtu Total_Electricity_Generated_from_Onsite_Renewables_kBtu Onsite_Generation_kBtu building_id address city floor_area_sqft data_year dataset_name annual_electricity_kwh annual_onsite_generation_kwh",
-    "permits": "id full_address latitude longitude permit_type issue_date applicant_submit_date status description proposed_work_description specific_url mbl",
+    "permits": "id full_address latitude longitude permit_type permit_number issue_date applicant_submit_date status description proposed_work_description specific_url search_address mbl",
     "electrical_permits": "id full_address latitude longitude issue_date applicant_submit_date status permit_type building_permit building_use mbl existing_service volts_existing_service amps_existing_service volts_new_service amps_new_service ampacity kva count_of_meters_existing count_of_meters_new_service overhead_existing underground_existing overhead_new_service underground_new_service generators photovoltaic_panels proposed_work_description description specific_url",
     "solar_permits": "id full_address latitude longitude issue_date applicant_submit_date status permit_type mbl work_description solar_energy_type solar_system_size watt_capacity photovoltaic_panel_count inverter_count inverter_type inverter_make_and_model mount_type battery_storage_capacity specific_url",
     "assessor_records": "address municipal_parcel_id massgis_parcel_id municipal_property_id parcel_match document_role search_method search_address section reported_assessor_attributes text_status record_kind MAP_PAR_ID Number AddressNum Street Owner1 Land_Use Zoning Lot_Size Frontage Year_Built Legal1 Date_Modif LOC_ID",

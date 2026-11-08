@@ -72,6 +72,9 @@ CANDIDATE_COLUMNS = {
         "permit_type": "permit_type",
         "status": "reported_status",
         "issue_date": "issue_date",
+        "applicant_submit_date": "application_date",
+        "permit_number": "permit_number",
+        "description": "work_description",
         "specific_url": "detail_url",
     },
     "utility_candidates": {"TOWN": "municipality", "ELEC": "provider"},
@@ -220,6 +223,11 @@ def checklist_table(site, *, include_all=False):
                         None,
                     )
                 )
+            # A partial source can have zero rows, e.g. a blocked utility page.
+            # Preserve its actual failure rather than a misleading blank tariff.
+            for index, issue in enumerate(source.get("document_errors", []), 1):
+                values.append((f"{name}.retrieval_issue[{index}]", issue.get("error"),
+                               {"source_url": issue.get("url")}))
             values = [
                 (leaf, item, record)
                 for label, value, record in values

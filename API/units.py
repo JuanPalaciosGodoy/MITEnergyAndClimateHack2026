@@ -35,6 +35,8 @@ _FIELD_UNITS = {
     "reported_new_service_amps": "A",
     "ampacity": "A",
     "transformer_rating_kva": "kVA",
+    "switchboard_rating_a": "A",
+    "main_breaker_rating_a": "A",
     "kva": "kVA",
     "reported_kva_raw": "kVA",
     "reported_ups_total_kva": "kVA",
@@ -55,6 +57,8 @@ _FIELD_UNITS = {
     "existing_meter_count": "count",
     "new_meter_count": "count",
     "record_count": "count",
+    "assessor_unit_count": "count",
+    "UNITS": "count",
     "Number of Units": "count",
     "page": "page",
     "number_of_stories": "stories",
@@ -81,6 +85,7 @@ _IDENTIFIERS = {
     _key(name)
     for name in "id permit_id entry_id OBJECTID FID UBID parcel_id municipal_parcel_id municipal_property_id massgis_parcel_id MAP_PAR_ID LOC_ID PROP_ID PLAN_ID REG_ID TOWN_ID mbl LS_BOOK LS_PAGE Number AddressNum ZIP ZIP_Code USE_CODE StateClassCode Map/Lot Book/Page Legal1".split()
 }
+_IDENTIFIERS.update({_key("postal_code"), _key("permit_number")})
 _NON_MEASUREMENTS = {
     _key(name)
     for name in "source_date source_title source_date_basis issue_date applicant_submit_date permit_type building_use description document_excerpt component_text interpretation document_role url source_url local_file specific_url detail_url source_date_basis dataset_name parcel_land_area_unit LOT_UNITS unit_raw rate_assignment schedule eligibility status reported_status existing_service overhead_existing underground_existing overhead_new_service underground_new_service parcel_match parcel_relation relation_status location_limit match_method search_method text_status record_kind search_address address full_address municipality state city recorded_owner Property_Class State_Class_Code Zoning Owner1 Owner(s) Land_Use Property_Type Property_Name Parent_Child_Status Reporting_Boundary section extension name entry_properties Style Occupancy Exterior_Wall_Type Roof_Material Overall_Condition Unit_Type inverter_type solar_energy_type mount_type public_reference_links registry_website WEBSITE DISTRICT source_location_basis search_address deed_retrieved recorded_plan_retrieved document_access access_detail existing_site_solar existing_generators existing_batteries transfer_switches single_line_diagram point_of_interconnection battery_storage_capacity reported_battery_field_raw reported_battery_installation_flag".split()

@@ -21,6 +21,7 @@ from .units import value_unit, COORDINATE_UNIT
 from .evidence import save_evidence
 from .location import record_location
 from .checklist_table import checklist_table
+from .public_permits import address_key
 from pathlib import Path
 import json
 from urllib.parse import urlencode
@@ -49,6 +50,9 @@ CATEGORIES = [
             "parcel_land_area_unit",
             "year_built",
             "number_of_stories",
+            "building_style",
+            "assessor_unit_count",
+            "postal_code",
             "zoning",
             "assessor_records",
             "land_records",
@@ -78,6 +82,9 @@ CATEGORIES = [
             "service_phases",
             "service_amperage_a",
             "transformer_rating_kva",
+            "switchboard_rating_a",
+            "main_breaker_rating_a",
+            "equipment_nameplates",
             "single_line_diagram",
             "point_of_interconnection",
             "electrical_permit_candidates",
@@ -106,6 +113,7 @@ CATEGORIES = [
             "mapped_building_id",
             "roofprint_area_sqft",
             "public_site_plans",
+            "site_photos",
             "municipal_archives",
             "permit_history",
         ],
@@ -179,7 +187,7 @@ def _run_source(
     if (
         result.get("query")
         and not result.get("query_url")
-        and name not in DEPENDENT_SOURCES
+        and (name not in DEPENDENT_SOURCES or (name == "permits" and municipality == "CAMBRIDGE"))
     ):
         endpoint = (
             info["url"] + "/query"
@@ -300,6 +308,9 @@ def build_checklist(results, latitude, longitude, municipality):
         "parcel_land_area_unit": ("parcels", "LOT_UNITS"),
         "year_built": ("parcels", "YEAR_BUILT"),
         "number_of_stories": ("parcels", "STORIES"),
+        "building_style": ("parcels", "STYLE"),
+        "assessor_unit_count": ("parcels", "UNITS"),
+        "postal_code": ("parcels", "ZIP"),
     }
     evidence = {
         field: _published_field(results, source, column)
@@ -401,7 +412,7 @@ def build_checklist(results, latitude, longitude, municipality):
         "source_id": "electrical_permits",
         "status": "candidate",
     }
-    return [
+    checklist = [
         {
             "id": category,
             "title": title,
@@ -424,6 +435,15 @@ def build_checklist(results, latitude, longitude, municipality):
         }
         for category, title, fields, source_ids, action in CATEGORIES
     ]
+    for category in checklist:
+        for field in category["fields"]:
+            if field["value"] is None:
+                source = results.get(field.get("source_id"), {})
+                field["missing_reason"] = (
+                    source.get("detail") or source.get("error")
+                    or "No matching public evidence retrieved. " + category["next_action"]
+                )
+    return checklist
 
 
 def lookup_site(
@@ -506,6 +526,22 @@ def lookup_site(
         }
         results.update({name: future.result() for name, future in futures.items()})
     references = {name: dict(info) for name, info in REFERENCES.items()}
+    # Distance alone cannot establish that a disclosure describes this facility.
+    searched_address = None
+    parcel_addresses = {r.get("SITE_ADDR") for r in results.get("parcels", {}).get("records", []) if r.get("SITE_ADDR")}
+    if len(parcel_addresses) == 1:
+        searched_address = next(iter(parcel_addresses))
+    for record in results.get("lber", {}).get("records", []):
+        record_address = record.get("address") or record.get("Street_Address")
+        relation = (
+            "Same published street address; reporting boundary still unverified"
+            if searched_address and address_key(record_address) == address_key(searched_address)
+            else "Different published street address; neighboring record, not the searched site's electricity"
+            if searched_address and record_address
+            else "Address match unknown; reporting boundary unverified"
+        )
+        record["site_address_match"] = relation
+        record["_location"]["source_location_basis"] += "; " + relation
     references["permits"].update(
         url=MUNICIPAL_PORTALS.get(municipality),
         search_address=None,
@@ -542,6 +578,7 @@ def lookup_site(
                 "category": category["id"],
                 "field": field["name"],
                 "next_action": category["next_action"],
+                "reason": field.get("missing_reason"),
             }
             for category in checklist
             for field in category["fields"]
@@ -593,11 +630,17 @@ def lookup_site(
                 for f in files
                 if f["status"] == "ok"
                 and f["kind"] in ("document", "assessor_image")
-                and f.get("source_id") in ("municipal_archives", "assessor_records")
+                and f.get("source_id") in ("municipal_archives", "assessor_records", "permits")
                 and any(
                     w in f["source_title"].lower()
                     for w in ("plan", "sketch", "blueprint", "drawing")
                 )
+            ],
+            "site_photos": [
+                {"title": f["source_title"], "file_url": f.get("file_url")}
+                for f in files
+                if f["status"] == "ok" and f["kind"] == "assessor_image"
+                and "photo" in f["source_title"].lower()
             ],
         }
         site["public_site_plans"] = summaries["public_site_plans"]
@@ -611,8 +654,9 @@ def lookup_site(
                         },
                         status="candidate",
                     )
+                    field.pop("missing_reason", None)
         site["missing_fields"] = [
-            {"category": c["id"], "field": f["name"], "next_action": c["next_action"]}
+            {"category": c["id"], "field": f["name"], "reason": f.get("missing_reason"), "next_action": c["next_action"]}
             for c in checklist
             for f in c["fields"]
             if f["value"] is None

@@ -11,7 +11,7 @@ This MVP keeps core intake facts. A later workflow can consume them, but this ba
 | Site/property | Address, municipality/state/coordinates, parcel IDs, reported owner/use, building and land area/units, construction year/stories, published zoning designation, assessor evidence, deed/plan references. |
 | Existing utility/service | Published utility candidates and historical parcel/address/meter/service relationships. |
 | Electricity and schedules | Annual purchased electricity, reported onsite electrical generation, reporting boundary/property/year metadata, public tariff components and effective dates. No savings calculation. |
-| Existing electrical information | Service voltage/phases/amperage, transformer rating, existing single-line/connection point, historical electrical permit evidence and page-cited equipment/rating mentions. Unknown current ratings remain missing. |
+| Existing electrical information | Service voltage/phases/amperage, switchboard and main-breaker ratings, transformer rating, equipment nameplates, existing single-line/connection point, historical electrical permit evidence and page-cited equipment/rating mentions. Unknown current ratings remain missing. |
 | Existing onsite equipment | Published evidence of solar, generators, batteries and transfer switches, including historical solar permit candidates. This is not a proposed battery configuration. |
 | Geometry and documents | Mapped building/roof outline, parcel-envelope aerial imagery, historical site plans, property-card photos/sketches, archive candidates and historical permit records. |
 
@@ -35,3 +35,5 @@ All values retain source identity, dates, searched/source coordinates, matching 
 `API/scope.py` contains positive source-record field lists, including nested assessor labels. These apply before source records enter the response. The six-group checklist contains only intake fields. Removed providers are absent from `/sources` and rejected if explicitly requested. Both `include_all` views use the same narrow schema. `checklist_table` refuses pre-scope lookup JSON; fetch the site again instead of reviving old fields.
 
 Original downloaded public PDFs/images are preserved for traceability and can contain broader historical content. They do not add extra fields or workflows to the modeled record. Supplied project files and manually selected documents are not runtime inputs.
+
+See [checklist_coverage.md](checklist_coverage.md) for the original Excel category mapping, Attleboro's anonymous permit/attachment adapter, and remaining public-data gaps. Site photos are tracked separately from aerial imagery. Statewide parcel queries also expose building style, postal code and assessor unit count; the latter is not a meter count.

@@ -253,6 +253,7 @@ def save_evidence(site, evidence_dir, *, refresh=False):
                     "source_title": doc.get("title")
                     or doc.get("source_title")
                     or "Public linked document",
+                    "expected_pdf": doc.get("expected_pdf", False),
                     "source_date": doc.get("source_date"),
                     "source_date_basis": doc.get(
                         "source_date_basis", "Linked public document date not verified"
